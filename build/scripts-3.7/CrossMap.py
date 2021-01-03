@@ -1,4 +1,4 @@
-#!python
+#!/mnt/batty-shared/tools/miniconda3/envs/liftover/bin/python
 '''
 ---------------------------------------------------------------------------------------
 CrossMap: lift over genomic coordinates between genome assemblies.
@@ -26,7 +26,7 @@ __contributor__="Liguo Wang, Hao Zhao"
 __copyright__ = "Copyleft"
 __credits__ = []
 __license__ = "GPLv2"
-__version__="0.4.3"
+__version__="0.4.2"
 __maintainer__ = "Liguo Wang"
 __email__ = "wangliguo78@gmail.com"
 __status__ = "Production"
@@ -604,11 +604,7 @@ def crossmap_vcf_file(mapping, infile, outfile, liftoverfile, refgenome):
 				# update ref allele
 				target_chr = update_chromID(refFasta.references[0], target_chr)
 				fields[3] = refFasta.fetch(target_chr,target_start,target_end).upper()
-				
-				# update END if any
-				fields[7] = re.sub('END\=\d+','END='+str(target_end),fields[7])
-				
-				
+						
 				if a[1][3] == '-':
 					fields[4] = revcomp_DNA(fields[4], True)
 				
@@ -973,19 +969,19 @@ def crossmap_bed_file(mapping, inbed, outfile=None):
 		try:
 			int(fields[1])
 		except:
-			print("Start coordinate is not an integer. skip " + line, file=sys.stderr)
+			print("Start corrdinate is not an integer. skip " + line, file=sys.stderr)
 			if outfile:
 				print(line + '\tInvalidStartPosition', file=UNMAP)
 			continue
 		try:
 			int(fields[2])
 		except:
-			print("End coordinate is not an integer. skip " + line, file=sys.stderr)
+			print("End corrdinate is not an integer. skip " + line, file=sys.stderr)
 			if outfile:
 				print(line + '\tInvalidEndPosition', file=UNMAP)
 			continue
 		if int(fields[1]) > int(fields[2]):
-			print("\"Start\" is larger than \"End\" coordinate is not an integer. skip " + line, file=sys.stderr)
+			print("\"Start\" is larger than \"End\" corrdinate is not an integer. skip " + line, file=sys.stderr)
 			if outfile:
 				print(line + '\tStart>End', file=UNMAP)
 			continue
@@ -1220,7 +1216,7 @@ def crossmap_gff_file(mapping, ingff,outfile = None):
 			else:
 				print('\t'.join([str(i) for i in fields]), file=FILE_OUT)
 			
-def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, IS_size=200, IS_std=30.0, fold=3, addtag = True):			
+def crossmap_bam_file(mapping, chainfile, infile, unmapped_file, outfile_prefix, chrom_size, IS_size=200, IS_std=30.0, fold=3, addtag = True):			
 	'''
 	
 	Description
@@ -1352,6 +1348,12 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 		else:
 			print("Unknown file type! Input file must have suffix '.bam','.cram', or '.sam'.", file=sys.stderr)
 			sys.exit(1)			
+	
+	if unmapped_file is not None:
+		UNMAP = open(unmapped_file,'w')
+	else:
+		sys.exit(1)
+
 	QF = 0
 	NN = 0
 	NU = 0
@@ -1376,8 +1378,8 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 			new_alignment.query_sequence = old_alignment.query_sequence       # 10th column. read sequence. all bases.
 			new_alignment.query_qualities = old_alignment.query_qualities	  # 11th column. read sequence quality. all bases.
 			new_alignment.set_tags(old_alignment.get_tags() )                 # 12 - columns
-			
-			
+			unmap_queryname = old_alignment.query_name
+
 			# by default pysam will change RG:Z to RG:A, which can cause downstream failures with GATK and freebayes
 			# Thanks Wolfgang Resch <wresch@helix.nih.gov> identified this bug and provided solution.
 			try:
@@ -1387,14 +1389,18 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 			else:
 				new_alignment.set_tag("RG", str(rg), rgt)
 				
-			
 			## Pair-end sequencing
 			if old_alignment.is_paired:
 				new_alignment.flag = 0x1 #pair-end in sequencing
 				if old_alignment.is_read1:
 					new_alignment.flag = new_alignment.flag | 0x40
+					unmap_queryname = unmap_queryname + ".1"
 				elif old_alignment.is_read2:
-					new_alignment.flag = new_alignment.flag | 0x80		
+					new_alignment.flag = new_alignment.flag | 0x80
+					unmap_queryname = unmap_queryname + ".2"
+
+				if old_alignment.is_supplementary:
+					new_alignment.flag = new_alignment.flag | 0x800
 
 				if old_alignment.is_qcfail:
 					new_alignment.flag = new_alignment.flag | 0x200
@@ -1407,91 +1413,94 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 					new_alignment.template_length = 0      #9
 					
 					QF += 1
-					if addtag: new_alignment.set_tag(tag="QF", value=0)
-					OUT_FILE.write(new_alignment)
+					if addtag:
+						new_alignment.set_tag(tag="QF", value=0)
+						UNMAP.write('chr' + '\t' + old_alignment.reference_start + '\t' + old_alignment.reference_end + '\t' + unmap_queryname + '\n')
 					continue					
 				#==================================
 				# R1 originally unmapped
 				#==================================					
 				elif old_alignment.is_unmapped:
-					new_alignment.flag = new_alignment.flag | 0x4         #2
-					new_alignment.reference_id = -1                       #3
-					new_alignment.reference_start = 0                     #4
-					new_alignment.mapping_quality = 255			          #5
-					new_alignment.cigartuples = old_alignment.cigartuples #6
+					UNMAP.write('chr' + '\t' + old_alignment.reference_start + '\t' + old_alignment.reference_end + '\t' + unmap_queryname + '\n')
+					continue
+					# new_alignment.flag = new_alignment.flag | 0x4         #2
+					# new_alignment.reference_id = -1                       #3
+					# new_alignment.reference_start = 0                     #4
+					# new_alignment.mapping_quality = 255			          #5
+					# new_alignment.cigartuples = old_alignment.cigartuples #6
 					
 					# R1 & R2 originally unmapped
-					if old_alignment.mate_is_unmapped:
-						new_alignment.next_reference_id = -1   #7
-						new_alignment.next_reference_start = 0 #8
-						new_alignment.template_length = 0      #9
-						
-						NN += 1
-						if addtag: new_alignment.set_tag(tag="NN", value=0)
-						OUT_FILE.write(new_alignment)
-						continue
+					# if old_alignment.mate_is_unmapped:
+					# 	new_alignment.next_reference_id = -1   #7
+					# 	new_alignment.next_reference_start = 0 #8
+					# 	new_alignment.template_length = 0      #9
+                                                
+					# 	NN += 1
+					# 	if addtag: new_alignment.set_tag(tag="NN", value=0)
+					# 		OUT_FILE.write(new_alignment)
+					# 	continue
 					# R1 unmap, R2 is mapped
-					else:	
-						try:
-							read2_chr = samfile.get_reference_name(old_alignment.next_reference_id)									
-							read2_strand = '-' if old_alignment.mate_is_reverse else '+'
-							read2_start = old_alignment.next_reference_start
-							read2_end = read2_start + 1
-							read2_maps = map_coordinates(mapping, read2_chr, read2_start, read2_end, read2_strand)
-						except:
-							read2_maps = None
+					# else:	
+					# 	try:
+					# 		read2_chr = samfile.get_reference_name(old_alignment.next_reference_id)									
+					# 		read2_strand = '-' if old_alignment.mate_is_reverse else '+'
+					# 		read2_start = old_alignment.next_reference_start
+					# 		read2_end = read2_start + 1
+					# 		read2_maps = map_coordinates(mapping, read2_chr, read2_start, read2_end, read2_strand)
+					# 	except:
+					# 		read2_maps = None
 
-						#------------------------------------
-						# R1 unmapped, R2 failed to liftover
-						#------------------------------------					
-						if read2_maps is None:
-							new_alignment.next_reference_id = -1   #7
-							new_alignment.next_reference_start = 0 #8
-							new_alignment.template_length = 0      #9
+					# 	#------------------------------------
+					# 	# R1 unmapped, R2 failed to liftover
+					# 	#------------------------------------					
+					# 	if read2_maps is None:
+					# 		new_alignment.next_reference_id = -1   #7
+					# 		new_alignment.next_reference_start = 0 #8
+					# 		new_alignment.template_length = 0      #9
 						
-							NN += 1
-							if addtag: new_alignment.set_tag(tag="NN", value=0)
-							OUT_FILE.write(new_alignment)
-							continue
+					# 		NN += 1
+					# 		if addtag: new_alignment.set_tag(tag="NN", value=0)
+					# 		OUT_FILE.write(new_alignment)
+					# 		continue
 					
-						#------------------------------------
-						# R1 unmapped, R2 unique
-						#------------------------------------						
-						elif len(read2_maps) == 2:							
-							# 2-9									
-							if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
-							new_alignment.reference_id = name_to_id[read2_maps[1][0]]	#recommend to set the RNAME of unmapped read to its mate's
-							new_alignment.reference_start = read2_maps[1][1]				#recommend to set the POS of unmapped read to its mate's
-							new_alignment.mapping_quality = old_alignment.mapping_quality
-							new_alignment.cigartuples = old_alignment.cigartuples
-							new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
-							new_alignment.next_reference_start = read2_maps[1][1]
-							new_alignment.template_length = 0
+					# 	#------------------------------------
+					# 	# R1 unmapped, R2 unique
+					# 	#------------------------------------						
+					# 	elif len(read2_maps) == 2:							
+					# 		# 2-9									
+					# 		if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
+					# 		new_alignment.reference_id = name_to_id[read2_maps[1][0]]	#recommend to set the RNAME of unmapped read to its mate's
+					# 		new_alignment.reference_start = read2_maps[1][1]				#recommend to set the POS of unmapped read to its mate's
+					# 		new_alignment.mapping_quality = old_alignment.mapping_quality
+					# 		new_alignment.cigartuples = old_alignment.cigartuples
+					# 		new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
+					# 		new_alignment.next_reference_start = read2_maps[1][1]
+					# 		new_alignment.template_length = 0
 						
-							NU += 1
-							if addtag: new_alignment.set_tag(tag="NU", value=0)
-							OUT_FILE.write(new_alignment)
-							continue
+					# 		NU += 1
+					# 		if addtag: new_alignment.set_tag(tag="NU", value=0)
+					# 		OUT_FILE.write(new_alignment)
+					# 		continue
 					
-						#------------------------------------
-						# R1 unmapped, R2 multiple
-						#------------------------------------						
-						else:
-							if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
-							# 2-9
-							new_alignment.flag = new_alignment.flag | 0x100
-							new_alignment.reference_id = name_to_id[read2_maps[1][0]]
-							new_alignment.reference_start = read2_maps[1][1]
-							new_alignment.mapping_quality = old_alignment.mapping_quality
-							new_alignment.cigartuples = old_alignment.cigartuples
-							new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
-							new_alignment.next_reference_start =  read2_maps[1][1]
-							new_alignment.template_length = 0
+					# 	#------------------------------------
+					# 	# R1 unmapped, R2 multiple
+					# 	#------------------------------------						
+					# 	else:
+					# 		if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
+					# 		# 2-9
+					# 		new_alignment.flag = new_alignment.flag | 0x100
+					# 		new_alignment.reference_id = name_to_id[read2_maps[1][0]]
+					# 		new_alignment.reference_start = read2_maps[1][1]
+					# 		new_alignment.mapping_quality = old_alignment.mapping_quality
+					# 		new_alignment.cigartuples = old_alignment.cigartuples
+					# 		new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
+					# 		new_alignment.next_reference_start =  read2_maps[1][1]
+					# 		new_alignment.template_length = 0
 						
-							NM += 1
-							if addtag: new_alignment.set_tag(tag="NM", value=0)
-							OUT_FILE.write(new_alignment)
-							continue						
+					# 		NM += 1
+					# 		if addtag: new_alignment.set_tag(tag="NM", value=0)
+					# 		OUT_FILE.write(new_alignment)
+					# 		continue						
 				#==================================
 				# R1 is originally mapped 
 				#==================================				
@@ -1519,56 +1528,58 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 					#------------------------------------	
 					if read1_maps is None:					
 						# read2 is unmapped or failed to convertion
-						if old_alignment.mate_is_unmapped or (read2_maps is None):
-							# col2 - col9
-							new_alignment.flag = new_alignment.flag | 0x4  #2
-							new_alignment.reference_id = -1                #3
-							new_alignment.reference_start = 0              #4
-							new_alignment.mapping_quality = 255            #5
-							new_alignment.cigartuples = old_alignment.cigartuples #6
-							new_alignment.next_reference_id = -1	           #7
-							new_alignment.next_reference_start = 0         #8
-							new_alignment.template_length = 0              #9
+						UNMAP.write(read1_chr + '\t' + old_alignment.reference_start + '\t' + old_alignment.reference_end + '\t' + unmap_queryname + '\n')
+						continue
+                                                # if old_alignment.mate_is_unmapped or (read2_maps is None):
+						# 	# col2 - col9
+						# 	new_alignment.flag = new_alignment.flag | 0x4  #2
+						# 	new_alignment.reference_id = -1                #3
+						# 	new_alignment.reference_start = 0              #4
+						# 	new_alignment.mapping_quality = 255            #5
+						# 	new_alignment.cigartuples = old_alignment.cigartuples #6
+						# 	new_alignment.next_reference_id = -1	           #7
+						# 	new_alignment.next_reference_start = 0         #8
+						# 	new_alignment.template_length = 0              #9
 							
-							if addtag: new_alignment.set_tag(tag="NN", value=0)
-							NN += 1
-							OUT_FILE.write(new_alignment)
-							continue
+						# 	if addtag: new_alignment.set_tag(tag="NN", value=0)
+						# 	NN += 1
+						# 	OUT_FILE.write(new_alignment)
+						# 	continue
 					
-						# read2 is unique mapped
-						elif len(read2_maps) == 2:	
-							# col2 - col9
-							if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
-							new_alignment.reference_id = name_to_id[read2_maps[1][0]]	 #recommend to set the RNAME of unmapped read to its mate's
-							new_alignment.reference_start = read2_maps[1][1]				#recommend to set the POS of unmapped read to its mate's
-							new_alignment.mapping_quality = old_alignment.mapping_quality
-							new_alignment.cigartuples = old_alignment.cigartuples
-							new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
-							new_alignment.next_reference_start = read2_maps[1][1]	#start
-							new_alignment.template_length = 0
+						# # read2 is unique mapped
+						# elif len(read2_maps) == 2:	
+						# 	# col2 - col9
+						# 	if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
+						# 	new_alignment.reference_id = name_to_id[read2_maps[1][0]]	 #recommend to set the RNAME of unmapped read to its mate's
+						# 	new_alignment.reference_start = read2_maps[1][1]				#recommend to set the POS of unmapped read to its mate's
+						# 	new_alignment.mapping_quality = old_alignment.mapping_quality
+						# 	new_alignment.cigartuples = old_alignment.cigartuples
+						# 	new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
+						# 	new_alignment.next_reference_start = read2_maps[1][1]	#start
+						# 	new_alignment.template_length = 0
 						
-							NU += 1
-							if addtag: new_alignment.set_tag(tag="NU", value=0)
-							OUT_FILE.write(new_alignment)
-							continue
+						# 	NU += 1
+						# 	if addtag: new_alignment.set_tag(tag="NU", value=0)
+						# 	OUT_FILE.write(new_alignment)
+						# 	continue
 					
-						# read2 is multiple mapped
-						else:
-							# col2 - col9
-							if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
-							new_alignment.flag = new_alignment.flag | 0x100
-							new_alignment.reference_id = name_to_id[read2_maps[1][0]]
-							new_alignment.reference_start = read2_maps[1][1]
-							new_alignment.mapping_quality = 255			# mapq not available 
-							new_alignment.cigartuples = old_alignment.cigartuples
-							new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
-							new_alignment.next_reference_start =  read2_maps[1][1] #start
-							new_alignment.template_length = 0
+						# # read2 is multiple mapped
+						# else:
+						# 	# col2 - col9
+						# 	if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20		
+						# 	new_alignment.flag = new_alignment.flag | 0x100
+						# 	new_alignment.reference_id = name_to_id[read2_maps[1][0]]
+						# 	new_alignment.reference_start = read2_maps[1][1]
+						# 	new_alignment.mapping_quality = 255			# mapq not available 
+						# 	new_alignment.cigartuples = old_alignment.cigartuples
+						# 	new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]
+						# 	new_alignment.next_reference_start =  read2_maps[1][1] #start
+						# 	new_alignment.template_length = 0
 						
-							NM += 1
-							if addtag:new_alignment.set_tag(tag="NM", value=0)
-							OUT_FILE.write(new_alignment)
-							continue
+						# 	NM += 1
+						# 	if addtag:new_alignment.set_tag(tag="NM", value=0)
+						# 	OUT_FILE.write(new_alignment)
+						# 	continue
 				
 					#------------------------------------
 					# R1 uniquely mapped
@@ -1626,7 +1637,7 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 						else:
 							# 2 (strand)
 							if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20
-							# 2 (secondary alignment)
+                                                        # 2 (CORRECTION: not primary alignment)
 							new_alignment.flag = new_alignment.flag | 0x100
 						
 							#7-9
@@ -1692,7 +1703,7 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 						else:
 							# 2,7-9
 							if read2_maps[1][3] == '-': new_alignment.flag = new_alignment.flag | 0x20
-							# 2 (secondary alignment)
+                                                        # 2 (CORRECTION: not primary alignment)
 							new_alignment.flag = new_alignment.flag | 0x100
 							new_alignment.next_reference_id = name_to_id[read2_maps[1][0]]	#chrom
 							new_alignment.next_reference_start =  read2_maps[1][1]
@@ -1713,15 +1724,16 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 				# (1) originally unmapped
 				if old_alignment.is_unmapped:
 					# 2-6
-					new_alignment.flag = new_alignment.flag | 0x4
-					new_alignment.reference_id = -1
-					new_alignment.reference_start = 0
-					new_alignment.mapping_quality = 255
-					new_alignment.cigartuples = old_alignment.cigartuples
+					UNMAP.write('chr' + '\t' + old_alignment.reference_start + '\t' + old_alignment.reference_end + '\t' + unmap_queryname + '\n')
+					# new_alignment.flag = new_alignment.flag | 0x4
+					# new_alignment.reference_id = -1
+					# new_alignment.reference_start = 0
+					# new_alignment.mapping_quality = 255
+					# new_alignment.cigartuples = old_alignment.cigartuples
 					
-					SN += 1
-					if addtag: new_alignment.set_tag(tag="SN",value=0)
-					OUT_FILE.write(new_alignment)
+					# SN += 1
+					# if addtag: new_alignment.set_tag(tag="SN",value=0)
+					# OUT_FILE.write(new_alignment)
 					continue
 				else:
 					new_alignment.flag = 0x0
@@ -1733,14 +1745,15 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 				
 					# (2) unmapped afte liftover
 					if read_maps is None:
-						new_alignment.flag = new_alignment.flag | 0x4
-						new_alignment.reference_id = -1
-						new_alignment.reference_start = 0
-						new_alignment.mapping_quality = 255					
+						UNMAP.write(read_chr + '\t' + old_alignment.reference_start + '\t' + old_alignment.reference_end + '\t' + unmap_queryname + '\n')
+						# new_alignment.flag = new_alignment.flag | 0x4
+						# new_alignment.reference_id = -1
+						# new_alignment.reference_start = 0
+						# new_alignment.mapping_quality = 255					
 						
-						SN += 1
-						if addtag: new_alignment.set_tag(tag="SN",value=0)
-						OUT_FILE.write(new_alignment)
+						# SN += 1
+						# if addtag: new_alignment.set_tag(tag="SN",value=0)
+						# OUT_FILE.write(new_alignment)
 						continue
 				
 					# (3) unique mapped
@@ -1799,6 +1812,7 @@ def crossmap_bam_file(mapping, chainfile, infile,  outfile_prefix, chrom_size, I
 	except StopIteration:
 		printlog(["Done!"]) 
 	OUT_FILE.close()
+	UNMAP.close()
 	
 	if outfile_prefix is not None:
 		if file_type == "BAM" or file_type == "CRAM":
@@ -2109,7 +2123,7 @@ if __name__=='__main__':
 				sys.exit(0)
 		elif sys.argv[1].lower() == 'bam':
 		#def crossmap_bam_file(mapping, chainfile, infile,	outfile_prefix, chrom_size, IS_size=200, IS_std=30, fold=3):	
-			usage="CrossMap.py bam chain_file input_file output_file [options]\nNote: If output_file == STDOUT or -, CrossMap will write BAM file to the screen"
+			usage="CrossMap.py bam chain_file input_file unmapped_file output_file [options]\nNote: If output_file == STDOUT or -, CrossMap will write BAM file to the screen"
 			parser = optparse.OptionParser(usage, add_help_option=False)
 			parser.add_option("-m", "--mean", action="store",type="float",dest="insert_size", default=200.0, help="Average insert size of pair-end sequencing (bp). [default=%default]")
 			parser.add_option("-s", "--stdev", action="store",type="float",dest="insert_size_stdev", default=30.0, help="Stanadard deviation of insert size. [default=%default]" )
@@ -2117,7 +2131,7 @@ if __name__=='__main__':
 			parser.add_option("-a","--append-tags",action="store_true",dest="add_tags",help="Add tag to each alignment.")
 			(options,args)=parser.parse_args()
 			
-			if len(args) >= 3:
+			if len(args) >= 4:
 				print("Insert size = %f" % (options.insert_size), file=sys.stderr)
 				print("Insert size stdev = %f" % (options.insert_size_stdev), file=sys.stderr)
 				print("Number of stdev from the mean = %f" % (options.insert_size_fold), file=sys.stderr)
@@ -2127,15 +2141,16 @@ if __name__=='__main__':
 					print("Add tags to each alignment = %s" % ( False), file=sys.stderr)
 				chain_file = args[1]
 				in_file = args[2]
-				out_file = args[3] if len(args) >= 4 else None
+				unmapped_file = args[3]
+				out_file = args[4] if len(args) >= 5 else None
 				(mapTree, targetChromSizes, sourceChromSizes) = read_chain_file(chain_file)
 				
 				if out_file in ["STDOUT","-"]:
 					out_file = None
 				if options.add_tags:
-					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, outfile_prefix = out_file, chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev, fold=options.insert_size_fold,addtag=True)
+					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, unmapped_file = unmapped_file, outfile_prefix = out_file, chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev, fold=options.insert_size_fold,addtag=True)
 				else:
-					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, outfile_prefix = out_file, chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev, fold=options.insert_size_fold,addtag=False)
+					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, unmapped_file = unmapped_file, outfile_prefix = out_file, chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev, fold=options.insert_size_fold,addtag=False)
 			else:
 				parser.print_help()
 		elif sys.argv[1].lower() == 'vcf':
@@ -2179,3 +2194,4 @@ if __name__=='__main__':
 			general_help()
 			sys.exit(0)
   
+
