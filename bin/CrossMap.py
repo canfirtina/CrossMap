@@ -236,20 +236,16 @@ if __name__=='__main__':
 				bigwig_help()
 				sys.exit(0)
 		elif sys.argv[1].lower() == 'bam':
-			usage=("\nCrossMap.py bam  <chain_file>  <input.bam> [output_file] [options]\n\nNote:\nIf output_file is "
-					"'STDOUT','-' or missing, CrossMap will write BAM file to the screen")
+		#def crossmap_bam_file(mapping, chainfile, infile,	outfile_prefix, chrom_size, IS_size=200, IS_std=30, fold=3):	
+			usage="CrossMap.py bam chain_file input_file unmapped_file output_file [options]\nNote: If output_file == STDOUT or -, CrossMap will write BAM file to the screen"
 			parser = optparse.OptionParser(usage, add_help_option=False)
-			parser.add_option("-m", "--mean", action="store",type="float",dest="insert_size", default=200.0, help=
-							"Average insert size of pair-end sequencing (bp). {default=%default}")
-			parser.add_option("-s", "--stdev", action="store",type="float",dest="insert_size_stdev", default=30.0, help=
-							"Stanadard deviation of insert size. {default=%default}" )
-			parser.add_option("-t", "--times", action="store",type="float",dest="insert_size_fold", default=3.0, help=
-							"A mapped pair is considered as \"proper pair\" if both ends mapped to different strand and\
-							the distance between them is less then '-t' * stdev from the mean. {default=%default}")
+			parser.add_option("-m", "--mean", action="store",type="float",dest="insert_size", default=200.0, help="Average insert size of pair-end sequencing (bp). [default=%default]")
+			parser.add_option("-s", "--stdev", action="store",type="float",dest="insert_size_stdev", default=30.0, help="Stanadard deviation of insert size. [default=%default]" )
+			parser.add_option("-t", "--times", action="store",type="float",dest="insert_size_fold", default=3.0, help="A mapped pair is considered as \"proper pair\" if both ends mapped to different strand and the distance between them is less then '-t' * stdev from the mean. [default=%default]")
 			parser.add_option("-a","--append-tags",action="store_true",dest="add_tags",help="Add tag to each alignment.")
 			(options,args)=parser.parse_args()
-
-			if len(args) >= 3:
+			
+			if len(args) >= 4:
 				print("Insert size = %f" % (options.insert_size), file=sys.stderr)
 				print("Insert size stdev = %f" % (options.insert_size_stdev), file=sys.stderr)
 				print("Number of stdev from the mean = %f" % (options.insert_size_fold), file=sys.stderr)
@@ -259,22 +255,18 @@ if __name__=='__main__':
 					print("Add tags to each alignment = %s" % ( False), file=sys.stderr)
 				chain_file = args[1]
 				in_file = args[2]
-				out_file = args[3] if len(args) >= 4 else None
+				unmapped_file = args[3]
+				out_file = args[4] if len(args) >= 5 else None
 				(mapTree, targetChromSizes, sourceChromSizes) = read_chain_file(chain_file)
-
+				
 				if out_file in ["STDOUT","-"]:
 					out_file = None
 				if options.add_tags:
-					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, outfile_prefix = out_file,
-									chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev,
-									fold=options.insert_size_fold,addtag=True)
+					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, unmapped_file = unmapped_file, outfile_prefix = out_file, chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev, fold=options.insert_size_fold,addtag=True)
 				else:
-					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, outfile_prefix = out_file,
-									chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev,
-									fold=options.insert_size_fold,addtag=False)
+					crossmap_bam_file(mapping = mapTree, chainfile = chain_file, infile = in_file, unmapped_file = unmapped_file, outfile_prefix = out_file, chrom_size = targetChromSizes, IS_size=options.insert_size, IS_std=options.insert_size_stdev, fold=options.insert_size_fold,addtag=False)
 			else:
 				parser.print_help()
-
 		elif sys.argv[1].lower() == 'vcf':
 			usage=("\nCrossMap.py vcf <chain_file>  <input.vcf>  <refGenome.fa>  <output_file> [options]\n\nExamples:\n"
 				  "CrossMap.py vcf hg19ToHg18.over.chain.gz test.hg19.vcf hg18.fa test.hg18.vcf                     #comparing ref_allele to alt_allele to make sure they are different.\n"
