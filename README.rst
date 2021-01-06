@@ -6,11 +6,7 @@ Use pip to install CrossMap
 
 ::
 
- pip3 install git+https://github.com/liguowang/CrossMap.git
- 
- or 
- 
- pip3 install CrossMap	#Install CrossMap supporting Python3
+ pip3 install git+https://github.com/canfirtina/CrossMap.git
 
 
 Documentation
